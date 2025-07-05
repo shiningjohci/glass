@@ -932,104 +932,71 @@ async function sendMessage(userPrompt, options = {}) {
     try {
         console.log(`🤖 Processing message: ${userPrompt.substring(0, 50)}...`);
 
-        // 1. Get screenshot from main process
+        // 1. Get screenshot
         let screenshotBase64 = null;
         try {
             screenshotBase64 = await getCurrentScreenshot();
-            if (screenshotBase64) {
-                console.log('📸 Screenshot obtained for message request');
-            } else {
-                console.warn('No screenshot available for message request');
-            }
         } catch (error) {
             console.warn('Failed to get screenshot:', error);
         }
 
         const conversationHistory = formatRealtimeConversationHistory();
-        console.log(`📝 Using conversation history: ${realtimeConversationHistory.length} texts`);
-
         const systemPrompt = PICKLE_GLASS_SYSTEM_PROMPT.replace('{{CONVERSATION_HISTORY}}', conversationHistory);
+        
+        // --- Clarifai API Routing Logic ---
+        const config = ipcRenderer.sendSync('get-config').clarifai;
+        const useVision = !!screenshotBase64;
+        const model = useVision ? config.models.vision : config.models.text;
+        
+        console.log(`🧠 Using model via Clarifai: ${model}. Vision: ${useVision}`);
 
-        let API_KEY = localStorage.getItem('openai_api_key');
-
-        if (!API_KEY && window.require) {
-            try {
-                const { ipcRenderer } = window.require('electron');
-                API_KEY = await ipcRenderer.invoke('get-stored-api-key');
-            } catch (error) {
-                console.error('Failed to get API key via IPC:', error);
-            }
+        const PAT = await ipcRenderer.invoke('get-stored-api-key');
+        if (!PAT) {
+            const errorMessage = `Clarifai PAT not found. Please set it in the settings.`;
+            console.error(errorMessage);
+            ipcRenderer.send('response-error', { message: errorMessage });
+            return { success: false, error: errorMessage };
         }
-
-        if (!API_KEY) {
-            API_KEY = process.env.OPENAI_API_KEY;
-        }
-
-        if (!API_KEY) {
-            throw new Error('No API key found in storage, IPC, or environment');
-        }
-
-        console.log('[Renderer] Using API key for message request');
 
         const messages = [
-            {
-                role: 'system',
-                content: systemPrompt,
-            },
+            { role: 'system', content: systemPrompt },
             {
                 role: 'user',
-                content: [
-                    {
-                        type: 'text',
-                        text: `User Request: ${userPrompt.trim()}`,
-                    },
-                ],
+                content: [{ type: 'text', text: `User Request: ${userPrompt.trim()}` }],
             },
         ];
 
-        if (screenshotBase64) {
+        if (useVision) {
             messages[1].content.push({
                 type: 'image_url',
-                image_url: {
-                    url: `data:image/jpeg;base64,${screenshotBase64}`,
-                },
+                image_url: { url: `data:image/jpeg;base64,${screenshotBase64}` },
             });
-            console.log('📷 Screenshot included in message request');
+            console.log('📷 Screenshot included in message request to Clarifai');
         }
 
-        const { isLoggedIn } = await queryLoginState();
-        const keyType = isLoggedIn ? 'vKey' : 'apiKey';
-
-        console.log('🚀 Sending request to OpenAI...');
-        const { url, headers } =
-            keyType === 'apiKey'
-                ? {
-                      url: 'https://api.openai.com/v1/chat/completions',
-                      headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
-                  }
-                : {
-                      url: 'https://api.portkey.ai/v1/chat/completions',
-                      headers: {
-                          'x-portkey-api-key': 'gRv2UGRMq6GGLJ8aVEB4e7adIewu',
-                          'x-portkey-virtual-key': API_KEY,
-                          'Content-Type': 'application/json',
-                      },
-                  };
+        console.log('🚀 Sending request to Clarifai...');
+        const url = `${config.baseURL}/chat/completions`;
+        const headers = {
+            'Authorization': `Bearer ${PAT}`,
+            'Content-Type': 'application/json'
+        };
 
         const response = await fetch(url, {
             method: 'POST',
-            headers,
+            headers: headers,
             body: JSON.stringify({
-                model: 'gpt-4.1',
-                messages,
-                temperature: 0.7,
-                max_tokens: 2048,
+                model: model,
+                messages: messages,
                 stream: true,
+                max_tokens: 4096,
+                temperature: 0.7,
             }),
         });
 
         if (!response.ok) {
-            throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+            console.error('Clarifai API Error:', response.status, await response.text());
+            ipcRenderer.send('response-error', { message: `API Error: ${response.status}` });
+            return { success: false, error: response.statusText };
         }
 
         // --- 스트리밍 응답 처리 ---

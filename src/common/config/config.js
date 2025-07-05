@@ -29,7 +29,19 @@ class Config {
             enableSQLiteStorage: true,
             
             logLevel: 'info',
-            enableDebugLogging: false
+            enableDebugLogging: false,
+            
+            // AI提供商配置 (统一使用Clarifai)
+            clarifai: {
+                name: 'Clarifai',
+                baseURL: 'https://api.clarifai.com/v2/ext/openai/v1',
+                // 模型URL路径可以在Clarifai平台找到
+                models: {
+                    text: 'https://clarifai.com/deepseek/main/models/deepseek-chat', // 文本模型
+                    vision: 'https://clarifai.com/openai/chat-completion/models/gpt-4o',      // 视觉模型
+                    transcription: 'https://clarifai.com/openai/asr/models/whisper' // 语音转录模型
+                }
+            }
         };
         
         this.config = { ...this.defaults };

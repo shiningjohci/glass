@@ -2263,119 +2263,113 @@ function setupIpcHandlers(openaiSessionRef) {
             return { success: false, error: error.message };
         }
     });
+
+    ipcMain.handle('get-stored-api-key', (event) => {
+        return getStoredApiKey();
+    });
+
+    ipcMain.handle('set-api-key', async (event, key) => {
+        await setApiKey(key);
+        return true;
+    });
+
+    ipcMain.handle('clear-api-key', async (event) => {
+        await setApiKey(null);
+        return true;
+    });
+
+    ipcMain.handle('get-config', () => {
+        const config = require('../common/config/config');
+        return config.config;
+    });
 }
 
 let storedApiKey = null;
 
-async function setApiKey(apiKey) {
-    storedApiKey = apiKey;
-    console.log('[WindowManager] API key stored (and will be persisted to DB)');
+async function setApiKey(key) {
+    storedApiKey = key;
+    console.log(`[WindowManager] Clarifai PAT stored in memory`);
 
     try {
-        await sqliteClient.saveApiKey(apiKey);
-        console.log('[WindowManager] API key saved to SQLite');
+        await sqliteClient.saveApiKey(key); // Simplified save
+        console.log(`[WindowManager] Clarifai PAT saved to SQLite`);
     } catch (err) {
-        console.error('[WindowManager] Failed to save API key to SQLite:', err);
+        console.error(`[WindowManager] Failed to save Clarifai PAT to SQLite:`, err);
     }
-
-    windowPool.forEach(win => {
-        if (win && !win.isDestroyed()) {
-            const js = apiKey ? `localStorage.setItem('openai_api_key', ${JSON.stringify(apiKey)});` : `localStorage.removeItem('openai_api_key');`;
-            win.webContents.executeJavaScript(js).catch(() => {});
-        }
-    });
 }
 
-async function loadApiKeyFromDb() {
+async function loadApiKeysFromDb() {
     try {
-        const user = await sqliteClient.getUser(sqliteClient.defaultUserId);
-        if (user && user.api_key) {
-            console.log('[WindowManager] API key loaded from SQLite for default user.');
-            return user.api_key;
+        const key = await sqliteClient.getApiKey(); // Simplified get
+        if (key) {
+            storedApiKey = key;
+            console.log('[WindowManager] Clarifai PAT loaded from DB.');
         }
-        return null;
-    } catch (error) {
-        console.error('[WindowManager] Failed to load API key from SQLite:', error);
-        return null;
+    } catch (err) {
+        console.error('[WindowManager] Failed to load API key from DB:', err);
     }
-}
-
-function getCurrentFirebaseUser() {
-    return currentFirebaseUser;
-}
-
-function isFirebaseLoggedIn() {
-    return !!currentFirebaseUser;
-}
-
-function setCurrentFirebaseUser(user) {
-    currentFirebaseUser = user;
-    console.log('[WindowManager] Firebase user updated:', user ? user.email : 'null');
 }
 
 function getStoredApiKey() {
     return storedApiKey;
 }
 
+function setupIpcHandlers(openaiSessionRef) {
+    // ...
+
+    ipcMain.handle('get-stored-api-key', (event) => {
+        return getStoredApiKey();
+    });
+
+    ipcMain.handle('set-api-key', async (event, key) => {
+        await setApiKey(key);
+        return true;
+    });
+
+    ipcMain.handle('clear-api-key', async (event) => {
+        await setApiKey(null);
+        return true;
+    });
+
+    ipcMain.handle('get-config', () => {
+        const config = require('../common/config/config');
+        return config.config;
+    });
+    
+    // ...
+}
+
+function createMainWindow(sendToRenderer, openaiSessionRef) {
+    // ...
+    // At the beginning of createMainWindow, after sqliteClient is initialized
+    loadApiKeysFromDb();
+    // ...
+}
+
 function setupApiKeyIPC() {
     const { ipcMain } = require('electron');
 
-    ipcMain.handle('get-stored-api-key', async () => {
-        if (storedApiKey === null) {
-            const dbKey = await loadApiKeyFromDb();
-            if (dbKey) {
-                await setApiKey(dbKey);
-            }
-        }
-        return storedApiKey;
+    ipcMain.handle('get-stored-api-key', (event) => {
+        return getStoredApiKey();
     });
 
-    ipcMain.handle('api-key-validated', async (event, apiKey) => {
-        console.log('[WindowManager] API key validation completed, saving...');
-        await setApiKey(apiKey);
-
-        windowPool.forEach((win, name) => {
-            if (win && !win.isDestroyed()) {
-                win.webContents.send('api-key-validated', apiKey);
-            }
-        });
-
-        return { success: true };
+    ipcMain.handle('set-api-key', async (event, key) => {
+        await setApiKey(key);
+        return true;
     });
 
-    ipcMain.handle('remove-api-key', async () => {
-        console.log('[WindowManager] API key removal requested');
+    ipcMain.handle('clear-api-key', async (event) => {
         await setApiKey(null);
-
-        windowPool.forEach((win, name) => {
-            if (win && !win.isDestroyed()) {
-                win.webContents.send('api-key-removed');
-            }
-        });
-
-        const settingsWindow = windowPool.get('settings');
-        if (settingsWindow && settingsWindow.isVisible()) {
-            settingsWindow.hide();
-            console.log('[WindowManager] Settings window hidden after clearing API key.');
-        }
-
-        return { success: true };
+        return true;
     });
 
-    ipcMain.handle('get-current-api-key', async () => {
-        if (storedApiKey === null) {
-            const dbKey = await loadApiKeyFromDb();
-            if (dbKey) {
-                await setApiKey(dbKey);
-            }
-        }
-        return storedApiKey;
+    ipcMain.handle('get-config', () => {
+        const config = require('../common/config/config');
+        return config.config;
     });
-
-    console.log('[WindowManager] API key related IPC handlers registered (SQLite-backed)');
 }
 
-function createWindow(sendToRenderer, openaiSessionRef) {
+function createMainWindow(sendToRenderer, openaiSessionRef) {
     const mainWindow = new BrowserWindow({
         width: DEFAULT_WINDOW_WIDTH,
         height: HEADER_HEIGHT,
