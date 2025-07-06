@@ -60,7 +60,7 @@ class CustomizeView extends LitElement {
             this.showSuccessMessage = true;
             setTimeout(() => { this.showSuccessMessage = false; }, 2000);
             console.log('Clarifai PAT saved successfully.');
-        } catch (error) {
+            } catch (error) {
             console.error('Failed to save API key:', error);
         }
     }
@@ -72,7 +72,7 @@ class CustomizeView extends LitElement {
                     <h2>API Settings</h2>
                     <p>Enter your Clarifai Personal Access Token (PAT) below. This single key will be used for all AI features.</p>
                 </div>
-                
+
                 <div class="api-key-input-container">
                     <input 
                         type="password" 
@@ -200,3 +200,6 @@ class CustomizeView extends LitElement {
 }
 
 customElements.define('customize-view', CustomizeView);
+
+// Export the class for ES6 module imports
+export default CustomizeView;

@@ -943,16 +943,16 @@ async function sendMessage(userPrompt, options = {}) {
         const conversationHistory = formatRealtimeConversationHistory();
         const systemPrompt = PICKLE_GLASS_SYSTEM_PROMPT.replace('{{CONVERSATION_HISTORY}}', conversationHistory);
         
-        // --- Clarifai API Routing Logic ---
-        const config = ipcRenderer.sendSync('get-config').clarifai;
+        // --- Python AI Agent Routing Logic ---
+        const config = ipcRenderer.sendSync('get-config').ai;
         const useVision = !!screenshotBase64;
-        const model = useVision ? config.models.vision : config.models.text;
         
-        console.log(`🧠 Using model via Clarifai: ${model}. Vision: ${useVision}`);
+        console.log(`🧠 Using Python AI Agent. Vision: ${useVision}`);
 
-        const PAT = await ipcRenderer.invoke('get-stored-api-key');
-        if (!PAT) {
-            const errorMessage = `Clarifai PAT not found. Please set it in the settings.`;
+        // Check if Python server is available
+        const pythonServerHealth = await ipcRenderer.invoke('check-python-health');
+        if (!pythonServerHealth) {
+            const errorMessage = `Python AI server is not available. Please restart the application.`;
             console.error(errorMessage);
             ipcRenderer.send('response-error', { message: errorMessage });
             return { success: false, error: errorMessage };
@@ -971,31 +971,36 @@ async function sendMessage(userPrompt, options = {}) {
                 type: 'image_url',
                 image_url: { url: `data:image/jpeg;base64,${screenshotBase64}` },
             });
-            console.log('📷 Screenshot included in message request to Clarifai');
+            console.log('📷 Screenshot included in message request to Python AI Agent');
         }
 
-        console.log('🚀 Sending request to Clarifai...');
-        const url = `${config.baseURL}/chat/completions`;
+        console.log('🚀 Sending request to Python AI Agent...');
+        const url = `${config.baseURL}${config.endpoints.chat}`;
         const headers = {
-            'Authorization': `Bearer ${PAT}`,
             'Content-Type': 'application/json'
         };
+
+        const payload = {
+            messages: messages,
+            stream: true,
+            max_tokens: 4096,
+            temperature: 0.7,
+        };
+
+        // Let Python agent decide the model based on content
+        if (useVision) {
+            payload.model = config.routing.vision; // Force vision model for images
+        }
 
         const response = await fetch(url, {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({
-                model: model,
-                messages: messages,
-                stream: true,
-                max_tokens: 4096,
-                temperature: 0.7,
-            }),
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
-            console.error('Clarifai API Error:', response.status, await response.text());
-            ipcRenderer.send('response-error', { message: `API Error: ${response.status}` });
+            console.error('Python AI Agent Error:', response.status, await response.text());
+            ipcRenderer.send('response-error', { message: `AI Agent Error: ${response.status}` });
             return { success: false, error: response.statusText };
         }
 

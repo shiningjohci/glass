@@ -31,17 +31,26 @@ class Config {
             logLevel: 'info',
             enableDebugLogging: false,
             
-            // AI提供商配置 (统一使用Clarifai)
-            clarifai: {
-                name: 'Clarifai',
-                baseURL: 'https://api.clarifai.com/v2/ext/openai/v1',
-                // 模型URL路径可以在Clarifai平台找到
-                models: {
-                    text: 'https://clarifai.com/deepseek/main/models/deepseek-chat', // 文本模型
-                    vision: 'https://clarifai.com/openai/chat-completion/models/gpt-4o',      // 视觉模型
-                    transcription: 'https://clarifai.com/openai/asr/models/whisper' // 语音转录模型
+            // AI提供商配置
+            ai: {
+                name: 'LiteLLM Railway',
+                baseURL: process.env.LITELLM_BASE_URL || 'https://litellm-production-ec35.up.railway.app', // Railway 部署地址
+                endpoints: {
+                    chat: '/chat/completions',
+                    health: '/health'
+                },
+                // 智能路由配置 (在Railway上配置)
+                routing: {
+                    lowComplexity: 'deepseek/deepseek-chat',
+                    mediumComplexity: 'deepseek/deepseek-chat', 
+                    highComplexity: 'gpt-4o',
+                    vision: 'gpt-4o',
+                    transcription: 'whisper-1'
                 }
-            }
+            },
+            
+            // 控制是否启动本地Python服务器
+            disableLocalPythonServer: process.env.DISABLE_LOCAL_PYTHON_SERVER === 'true' || true // 默认禁用本地服务器
         };
         
         this.config = { ...this.defaults };
@@ -58,6 +67,16 @@ class Config {
         if (process.env.pickleglass_WEB_URL) {
             this.config.webUrl = process.env.pickleglass_WEB_URL;
             console.log(`[Config] Web URL from env: ${this.config.webUrl}`);
+        }
+        
+        // Railway LiteLLM配置
+        if (process.env.LITELLM_BASE_URL) {
+            this.config.ai.baseURL = process.env.LITELLM_BASE_URL;
+            console.log(`[Config] LiteLLM URL from env: ${this.config.ai.baseURL}`);
+        }
+        
+        if (process.env.DISABLE_LOCAL_PYTHON_SERVER) {
+            this.config.disableLocalPythonServer = process.env.DISABLE_LOCAL_PYTHON_SERVER === 'true';
         }
         
         if (process.env.pickleglass_API_TIMEOUT) {
@@ -116,6 +135,21 @@ class Config {
     
     set(key, value) {
         this.config[key] = value;
+    }
+
+    /**
+     * 设置LiteLLM服务器URL (Railway或本地)
+     */
+    setLiteLLMURL(url) {
+        this.config.ai.baseURL = url;
+        console.log(`[Config] LiteLLM server URL updated to: ${this.config.ai.baseURL}`);
+    }
+
+    /**
+     * 检查是否应该启动本地Python服务器
+     */
+    shouldStartLocalPythonServer() {
+        return !this.config.disableLocalPythonServer;
     }
     
     getAll() {

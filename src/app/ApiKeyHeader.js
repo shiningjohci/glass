@@ -373,37 +373,45 @@ export class ApiKeyHeader extends LitElement {
 
     async validateApiKey(apiKey) {
         if (!apiKey || apiKey.length < 15) return false;
-        if (!apiKey.match(/^[A-Za-z0-9_-]+$/)) return false;
 
         try {
-            console.log('Validating API key with openai models endpoint...');
+            const config = require('../../common/config/config');
+            const baseURL = config.get('ai').baseURL;
+            const healthEndpoint = `${baseURL}/health`;
+            
+            console.log(`Validating API key with LiteLLM health endpoint: ${healthEndpoint}`);
 
-            const response = await fetch('https://api.openai.com/v1/models', {
+            // We send the API key as a bearer token. The LiteLLM proxy
+            // will use this for authentication if it's configured to do so.
+            // For now, we just need to confirm we can reach the service.
+            const response = await fetch(healthEndpoint, {
                 headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${apiKey}`,
+                    'Authorization': `Bearer ${apiKey}`,
                 },
             });
 
             if (response.ok) {
                 const data = await response.json();
-
-                const hasGPTModels = data.data && data.data.some(m => m.id.startsWith('gpt-'));
-                if (hasGPTModels) {
-                    console.log('API key validation successful - GPT models available');
+                console.log('LiteLLM health check successful:', data);
+                // Check if the service is healthy and has models available
+                if (data.status === 'healthy' && data.available_models && data.available_models.length > 0) {
                     return true;
                 } else {
-                    console.log('API key valid but no GPT models available');
-                    return false;
+                    console.warn('LiteLLM service is reachable but not fully configured:', data);
+                    // We can be lenient here, if the service is up, we can proceed.
+                    // The user might configure models later.
+                    return true; 
                 }
             } else {
-                const errorData = await response.json().catch(() => ({}));
-                console.log('API key validation failed:', response.status, errorData.error?.message || 'Unknown error');
+                const errorData = await response.text();
+                console.log('LiteLLM health check failed:', response.status, errorData);
                 return false;
             }
         } catch (error) {
-            console.error('API key validation network error:', error);
-            return apiKey.length >= 20; // Fallback for network issues
+            console.error('LiteLLM health check network error:', error);
+            // Fallback for network issues, maybe the service is just starting.
+            // A simple length check can be a temporary gate.
+            return apiKey.length >= 15;
         }
     }
 

@@ -527,7 +527,8 @@ async function initializeLiveSummarySession(language = 'en') {
     }
 
     const loggedIn = isFirebaseLoggedIn();
-    const keyType = loggedIn ? 'vKey' : 'apiKey';
+    const finalKeyType = loggedIn ? 'vKey' : 'apiKey';
+    console.log(`[STT Init] Using key type: ${finalKeyType}`);
 
     isInitializingSession = true;
     sendToRenderer('session-initializing', true);
@@ -547,8 +548,6 @@ async function initializeLiveSummarySession(language = 'en') {
     // However, for simplicity let's assume a direct HTTP/WebSocket interface would be built
     // For now, this part will be conceptually adapted. The key is using the PAT.
     console.log('[LiveSummaryService] Using Clarifai for STT is conceptually ready.');
-
-    const keyType = 'apiKey'; // We treat the PAT as an API Key
 
     initializeNewSession();
 
@@ -642,8 +641,8 @@ async function initializeLiveSummarySession(language = 'en') {
         };
 
         [mySttSession, theirSttSession] = await Promise.all([
-            connectToOpenAiSession(PAT, mySttConfig, keyType),
-            connectToOpenAiSession(PAT, theirSttConfig, keyType),
+            connectToOpenAiSession(PAT, mySttConfig, finalKeyType),
+            connectToOpenAiSession(PAT, theirSttConfig, finalKeyType),
         ]);
 
         console.log('✅ Both STT sessions initialized successfully.');

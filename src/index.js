@@ -21,12 +21,153 @@ const { Deeplink } = require('electron-deeplink');
 const express = require('express');
 const fetch = require('node-fetch');
 const { autoUpdater } = require('electron-updater');
+// Python server management
+const { PythonShell } = require('python-shell');
+const fs = require('fs');
+
+// Load Railway configuration (if exists)
+try {
+    const railwayConfigPath = path.join(__dirname, '..', 'railway.config.js');
+    if (fs.existsSync(railwayConfigPath)) {
+        require(railwayConfigPath);
+        console.log('[Railway] Configuration loaded');
+    }
+} catch (error) {
+    console.log('[Railway] Configuration not found, using defaults');
+}
+const os = require('os');
 
 let WEB_PORT = 3000;
+let PYTHON_PORT = 5001;
 
 const openaiSessionRef = { current: null };
 let deeplink = null; // Initialize as null
 let pendingDeepLinkUrl = null; // Store any deep link that arrives before initialization
+
+// Python server management
+let pythonProcess = null;
+let pythonServerReady = false;
+
+/**
+ * Start Python Flask server
+ */
+async function startPythonServer() {
+    return new Promise((resolve, reject) => {
+        try {
+            console.log('[Python] Starting Python Flask server...');
+            
+            const pythonCorePath = path.join(__dirname, '..', 'python_core');
+            const mainPyPath = path.join(pythonCorePath, 'main.py');
+            
+            // Check if Python core files exist
+            if (!fs.existsSync(mainPyPath)) {
+                console.error('[Python] main.py not found at:', mainPyPath);
+                reject(new Error('Python core files not found'));
+                return;
+            }
+            
+            // Set Python environment variables
+            const options = {
+                mode: 'text',
+                pythonPath: 'python',
+                pythonOptions: ['-u'], // Unbuffered output
+                scriptPath: pythonCorePath,
+                env: {
+                    ...process.env,
+                    FLASK_PORT: PYTHON_PORT.toString(),
+                    FLASK_HOST: '127.0.0.1'
+                }
+            };
+            
+            // Start Python process
+            pythonProcess = new PythonShell('main.py', options);
+            
+            pythonProcess.on('message', (message) => {
+                console.log('[Python]', message);
+                
+                // Detect server startup success message
+                if (message.includes('Flask server running') || message.includes('Running on http://')) {
+                    pythonServerReady = true;
+                    console.log(`[Python] Server ready on port ${PYTHON_PORT}`);
+                    resolve();
+                }
+            });
+            
+            pythonProcess.on('error', (error) => {
+                console.error('[Python] Error:', error);
+                pythonServerReady = false;
+                reject(error);
+            });
+            
+            pythonProcess.on('close', (code) => {
+                console.log(`[Python] Process exited with code ${code}`);
+                pythonServerReady = false;
+                pythonProcess = null;
+            });
+            
+            // 10 seconds timeout
+            setTimeout(() => {
+                if (!pythonServerReady) {
+                    console.error('[Python] Server startup timeout');
+                    reject(new Error('Python server startup timeout'));
+                }
+            }, 10000);
+            
+        } catch (error) {
+            console.error('[Python] Failed to start server:', error);
+            reject(error);
+        }
+    });
+}
+
+/**
+ * Stop Python Flask server
+ */
+async function stopPythonServer() {
+    if (pythonProcess) {
+        console.log('[Python] Stopping Python Flask server...');
+        try {
+            pythonProcess.kill('SIGTERM');
+            pythonProcess = null;
+            pythonServerReady = false;
+            console.log('[Python] Server stopped');
+        } catch (error) {
+            console.error('[Python] Error stopping server:', error);
+        }
+    }
+}
+
+/**
+ * Check LiteLLM server health status (local or remote)
+ */
+async function checkLiteLLMServerHealth() {
+    try {
+        const config = require('./common/config/config');
+        const baseURL = config.get('ai').baseURL;
+        const response = await fetch(`${baseURL}/health`);
+        return response.status === 200;
+    } catch (error) {
+        return false;
+    }
+}
+
+/**
+ * Get an available port
+ */
+async function getAvailablePort(startPort = 5001) {
+    return new Promise((resolve, reject) => {
+        const server = require('net').createServer();
+        server.listen(startPort, (err) => {
+            if (err) {
+                // 端口被占用，尝试下一个
+                resolve(getAvailablePort(startPort + 1));
+            } else {
+                const port = server.address().port;
+                server.close(() => resolve(port));
+            }
+        });
+    });
+}
 
 function createMainWindows() {
     createWindows();
@@ -98,6 +239,42 @@ app.whenReady().then(async () => {
         console.log('>>> [index.js] Database initialized successfully');
     }
 
+    // 检查是否需要启动本地Python AI服务器
+    const config = require('./common/config/config');
+    const shouldStartLocalServer = config.shouldStartLocalPythonServer();
+    
+    if (shouldStartLocalServer) {
+        // 启动本地Python AI服务器
+        try {
+            PYTHON_PORT = await getAvailablePort(5000);
+            console.log(`[Python] Starting local Python AI server on port ${PYTHON_PORT}...`);
+            await startPythonServer();
+            
+            // Update Python server URL in config
+            config.setLiteLLMURL(`http://127.0.0.1:${PYTHON_PORT}`);
+            
+            console.log(`[Python] Local Python AI server ready on port ${PYTHON_PORT}`);
+        } catch (error) {
+            console.error('[ERROR] Failed to start local Python AI server:', error);
+            console.log('[WARNING] Continuing without local Python AI server - using remote LiteLLM service');
+        }
+    } else {
+        console.log('[Remote] Using remote LiteLLM service at:', config.get('ai').baseURL);
+        console.log('[Remote] Skipping local Python server startup');
+        
+        // Verify remote service connection
+        try {
+            const response = await fetch(`${config.get('ai').baseURL}/health`);
+            if (response.ok) {
+                console.log('[Remote] Remote LiteLLM service is accessible');
+            } else {
+                console.warn('[WARNING] Remote LiteLLM service returned error:', response.status);
+            }
+        } catch (error) {
+            console.warn('[WARNING] Unable to verify remote LiteLLM service:', error.message);
+        }
+    }
+
     WEB_PORT = await startWebStack();
     console.log('Web front-end listening on', WEB_PORT);
     
@@ -116,8 +293,10 @@ app.on('window-all-closed', () => {
     }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
+    console.log('[App] Shutting down gracefully...');
     stopMacOSAudioCapture();
+    await stopPythonServer();
     databaseInitializer.close();
 });
 
@@ -195,6 +374,20 @@ function setupGeneralIpcHandlers() {
             console.error('[Auth] Failed to open Firebase auth URL:', error);
             return { success: false, error: error.message };
         }
+    });
+
+    ipcMain.handle('check-python-health', async () => {
+        return await checkLiteLLMServerHealth();
+    });
+
+    ipcMain.handle('get-config', async () => {
+        const config = require('./common/config/config');
+        return config.getAll();
+    });
+
+    ipcMain.on('get-config', (event) => {
+        const config = require('./common/config/config');
+        event.returnValue = config.getAll();
     });
 
     ipcMain.on('firebase-auth-success', async (event, firebaseUser) => {
@@ -332,7 +525,7 @@ async function handleFirebaseAuthCallback(params) {
         const firebaseUser = {
             uid: user.uid,
             email: user.email || 'no-email@example.com',
-            displayName: user.name || 'User',
+            displayName: user.display_name || 'User',
             photoURL: user.picture
         };
 
@@ -449,14 +642,14 @@ async function startWebStack() {
   const apiPort = await getAvailablePort();
   const frontendPort = await getAvailablePort();
 
-  console.log(`🔧 Allocated ports: API=${apiPort}, Frontend=${frontendPort}`);
+  console.log(`[Web] Allocated ports: API=${apiPort}, Frontend=${frontendPort}`);
 
   process.env.pickleglass_API_PORT = apiPort.toString();
   process.env.pickleglass_API_URL = `http://localhost:${apiPort}`;
   process.env.pickleglass_WEB_PORT = frontendPort.toString();
   process.env.pickleglass_WEB_URL = `http://localhost:${frontendPort}`;
 
-  console.log(`🌍 Environment variables set:`, {
+  console.log(`[Web] Environment variables set:`, {
     pickleglass_API_URL: process.env.pickleglass_API_URL,
     pickleglass_WEB_URL: process.env.pickleglass_WEB_URL
   });
@@ -467,8 +660,6 @@ async function startWebStack() {
   const staticDir = app.isPackaged
     ? path.join(process.resourcesPath, 'out')
     : path.join(__dirname, '..', 'pickleglass_web', 'out');
-
-  const fs = require('fs');
 
   if (!fs.existsSync(staticDir)) {
     console.error(`============================================================`);
@@ -490,7 +681,7 @@ async function startWebStack() {
   const tempDir = app.getPath('temp');
   const configPath = path.join(tempDir, 'runtime-config.json');
   fs.writeFileSync(configPath, JSON.stringify(runtimeConfig, null, 2));
-  console.log(`📝 Runtime config created in temp location: ${configPath}`);
+  console.log(`[Web] Runtime config created in temp location: ${configPath}`);
 
   const frontSrv = express();
   
@@ -517,7 +708,7 @@ async function startWebStack() {
     app.once('before-quit', () => server.close());
   });
 
-  console.log(`✅ Frontend server started on http://localhost:${frontendPort}`);
+  console.log(`[Web] Frontend server started on http://localhost:${frontendPort}`);
 
   const apiSrv = express();
   apiSrv.use(nodeApi);
@@ -528,9 +719,9 @@ async function startWebStack() {
     app.once('before-quit', () => server.close());
   });
 
-  console.log(`✅ API server started on http://localhost:${apiPort}`);
+  console.log(`[Web] API server started on http://localhost:${apiPort}`);
 
-  console.log(`🚀 All services ready:`);
+  console.log(`[Web] All services ready:`);
   console.log(`   Frontend: http://localhost:${frontendPort}`);
   console.log(`   API:      http://localhost:${apiPort}`);
 

@@ -2734,6 +2734,20 @@ function clearApiKey() {
     setApiKey(null);
 }
 
+// Firebase用户管理函数
+function getCurrentFirebaseUser() {
+    return currentFirebaseUser;
+}
+
+function setCurrentFirebaseUser(user) {
+    currentFirebaseUser = user;
+    console.log('[Firebase] User set:', user ? user.email || user.uid : 'null');
+}
+
+function isFirebaseLoggedIn() {
+    return currentFirebaseUser !== null;
+}
+
 async function getVirtualKeyByEmail(email, idToken) {
     if (!idToken) {
         throw new Error('Firebase ID token is required for virtual key request');

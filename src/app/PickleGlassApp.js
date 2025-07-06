@@ -1,5 +1,5 @@
 import { html, css, LitElement } from '../assets/lit-core-2.7.4.min.js';
-import { CustomizeView } from '../features/customize/CustomizeView.js';
+import CustomizeView from '../features/customize/CustomizeView.js';
 import { AssistantView } from '../features/listen/AssistantView.js';
 import { OnboardingView } from '../features/onboarding/OnboardingView.js';
 import { AskView } from '../features/ask/AskView.js';
