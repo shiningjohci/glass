@@ -942,7 +942,7 @@ async function sendMessage(userPrompt, options = {}) {
 
         const conversationHistory = formatRealtimeConversationHistory();
         const systemPrompt = PICKLE_GLASS_SYSTEM_PROMPT.replace('{{CONVERSATION_HISTORY}}', conversationHistory);
-        
+
         // --- Python AI Agent Routing Logic ---
         const config = ipcRenderer.sendSync('get-config').ai;
         const useVision = !!screenshotBase64;

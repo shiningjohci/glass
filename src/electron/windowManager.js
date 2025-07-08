@@ -26,6 +26,8 @@ let settingsHideTimer = null;
 
 let selectedCaptureSourceId = null;
 
+let ipcHandlersSetup = false; // Add this line
+
 const windowDefinitions = {
     header: {
         file: 'header.html',
@@ -93,7 +95,7 @@ function createFeatureWindows(header) {
     windowPool.set('ask', ask);
 
     // settings
-    const settings = new BrowserWindow({ ...commonChildOptions, width:240, height:450, parent:undefined });
+    const settings = new BrowserWindow({ ...commonChildOptions, width:400, height:600, parent:undefined });
     settings.setContentProtection(isContentProtectionOn);
     settings.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});
     settings.loadFile(path.join(__dirname,'../app/content.html'),{query:{view:'customize'}})
@@ -135,6 +137,24 @@ class WindowLayoutManager {
     constructor() {
         this.isUpdating = false;
         this.PADDING = 80;
+        this.lastMoveTime = 0;
+        this.setupDragDetection();
+    }
+
+    setupDragDetection() {
+        // 监听窗口移动事件
+        const updateMoveTime = () => {
+            this.lastMoveTime = Date.now();
+        };
+
+        // 延迟设置，确保windowPool已初始化
+        setTimeout(() => {
+            const header = windowPool.get('header');
+            if (header && !header.isDestroyed()) {
+                header.on('moved', updateMoveTime);
+                header.on('move', updateMoveTime);
+            }
+        }, 1000);
     }
 
     updateLayout() {
@@ -142,9 +162,30 @@ class WindowLayoutManager {
         this.isUpdating = true;
 
         setImmediate(() => {
+            // 检查是否有窗口正在被拖拽，如果是则跳过布局更新
+            const header = windowPool.get('header');
+            if (header && this.isDragging(header)) {
+                console.log('[Layout] Skipping layout update - window is being dragged');
+                this.isUpdating = false;
+                return;
+            }
+            
             this.positionWindows();
             this.isUpdating = false;
         });
+    }
+
+    isDragging(window) {
+        // 检查窗口是否正在被拖拽
+        // 通过检查窗口的移动状态来判断
+        if (!window || window.isDestroyed()) return false;
+        
+        // 如果窗口最近移动过，可能正在拖拽
+        const now = Date.now();
+        if (!this.lastMoveTime) this.lastMoveTime = 0;
+        const timeSinceLastMove = now - this.lastMoveTime;
+        
+        return timeSinceLastMove < 100; // 100ms内有移动则认为正在拖拽
     }
 
     positionWindows() {
@@ -251,17 +292,17 @@ class WindowLayoutManager {
                 listenXRel = askXRel - listenBounds.width - PAD;
             }
 
-            /* Y 좌표는 이미 상대값으로 계산돼 있음 */
+            /* Y 좌标设置为完全紧贴导航栏，无间距 */
             let yRel;
             switch (strategy.primary) {
                 case 'below':
-                    yRel = headerBounds.y - workAreaY + headerBounds.height + PAD;
+                    yRel = headerBounds.y - workAreaY + headerBounds.height; // 0px间距，完全紧贴
                     break;
                 case 'above':
-                    yRel = headerBounds.y - workAreaY - Math.max(askBounds.height, listenBounds.height) - PAD;
+                    yRel = headerBounds.y - workAreaY - Math.max(askBounds.height, listenBounds.height);
                     break;
                 default:
-                    yRel = headerBounds.y - workAreaY + headerBounds.height + PAD;
+                    yRel = headerBounds.y - workAreaY + headerBounds.height; // 0px间距，完全紧贴
                     break;
             }
 
@@ -291,13 +332,13 @@ class WindowLayoutManager {
             let yRel;
             switch (strategy.primary) {
                 case 'below':
-                    yRel = headerBounds.y - workAreaY + headerBounds.height + PAD;
+                    yRel = headerBounds.y - workAreaY + headerBounds.height; // 0px间距，完全紧贴
                     break;
                 case 'above':
-                    yRel = headerBounds.y - workAreaY - winBounds.height - PAD;
+                    yRel = headerBounds.y - workAreaY - winBounds.height;
                     break;
                 default:
-                    yRel = headerBounds.y - workAreaY + headerBounds.height + PAD;
+                    yRel = headerBounds.y - workAreaY + headerBounds.height; // 0px间距，完全紧贴
                     break;
             }
 
@@ -1548,6 +1589,12 @@ function updateLayout() {
 }
 
 function setupIpcHandlers(openaiSessionRef) {
+    if (ipcHandlersSetup) {
+        console.warn('[IPC] Handlers already set up. Skipping.');
+        return;
+    }
+    console.log('[IPC] Setting up IPC handlers.');
+    
     const layoutManager = new WindowLayoutManager();
     // const movementManager = new SmoothMovementManager();
     
@@ -1668,6 +1715,12 @@ function setupIpcHandlers(openaiSessionRef) {
                     window.setAlwaysOnTop(false);
                     window.hide();
                     settingsHideTimer = null;
+                    
+                    // 通知header窗口设置窗口已关闭
+                    const header = windowPool.get('header');
+                    if (header && !header.isDestroyed()) {
+                        header.webContents.send('settings-window-closed');
+                    }
                 }, 200);
             } else {
                 window.hide();
@@ -1824,7 +1877,7 @@ function setupIpcHandlers(openaiSessionRef) {
         console.log('Opening personalization page:', personalizeUrl);
     });
 
-    setupApiKeyIPC();
+
 
     ipcMain.handle('resize-window', () => {});
 
@@ -1833,6 +1886,12 @@ function setupIpcHandlers(openaiSessionRef) {
     ipcMain.handle('resize-header-window', (event, { width, height }) => {
         const header = windowPool.get('header');
         if (header) {
+            // If dragging, do not resize the window.
+            if (layoutManager && layoutManager.isDragging(header)) {
+                console.log('[Resize] Skipping header resize - window is being dragged.');
+                return;
+            }
+
             const wasResizable = header.isResizable();
             if (!wasResizable) {
                 header.setResizable(true);
@@ -2282,6 +2341,27 @@ function setupIpcHandlers(openaiSessionRef) {
         const config = require('../common/config/config');
         return config.config;
     });
+
+    // Add missing IPC handlers
+    ipcMain.handle('get-current-api-key', () => {
+        return getStoredApiKey();
+    });
+
+    ipcMain.handle('firebase-auth-state-changed', async (event, userData) => {
+        console.log('[WindowManager] Firebase auth state changed:', userData ? userData.uid : 'null');
+        return { success: true };
+    });
+
+    ipcMain.handle('get-header-position', () => {
+        const header = windowPool.get('header');
+        if (header) {
+            const [x, y] = header.getPosition();
+            return { x, y };
+        }
+        return { x: 0, y: 0 };
+    });
+
+    ipcHandlersSetup = true;
 }
 
 let storedApiKey = null;
@@ -2295,7 +2375,7 @@ async function setApiKey(key) {
         console.log(`[WindowManager] Clarifai PAT saved to SQLite`);
     } catch (err) {
         console.error(`[WindowManager] Failed to save Clarifai PAT to SQLite:`, err);
-    }
+        }
 }
 
 async function loadApiKeysFromDb() {
@@ -2311,33 +2391,10 @@ async function loadApiKeysFromDb() {
 }
 
 function getStoredApiKey() {
-    return storedApiKey;
+        return storedApiKey;
 }
 
-function setupIpcHandlers(openaiSessionRef) {
-    // ...
 
-    ipcMain.handle('get-stored-api-key', (event) => {
-        return getStoredApiKey();
-    });
-
-    ipcMain.handle('set-api-key', async (event, key) => {
-        await setApiKey(key);
-        return true;
-    });
-
-    ipcMain.handle('clear-api-key', async (event) => {
-        await setApiKey(null);
-        return true;
-    });
-
-    ipcMain.handle('get-config', () => {
-        const config = require('../common/config/config');
-        return config.config;
-    });
-    
-    // ...
-}
 
 function createMainWindow(sendToRenderer, openaiSessionRef) {
     // ...
@@ -2346,28 +2403,7 @@ function createMainWindow(sendToRenderer, openaiSessionRef) {
     // ...
 }
 
-function setupApiKeyIPC() {
-    const { ipcMain } = require('electron');
 
-    ipcMain.handle('get-stored-api-key', (event) => {
-        return getStoredApiKey();
-    });
-
-    ipcMain.handle('set-api-key', async (event, key) => {
-        await setApiKey(key);
-        return true;
-    });
-
-    ipcMain.handle('clear-api-key', async (event) => {
-        await setApiKey(null);
-        return true;
-    });
-
-    ipcMain.handle('get-config', () => {
-        const config = require('../common/config/config');
-        return config.config;
-    });
-}
 
 function createMainWindow(sendToRenderer, openaiSessionRef) {
     const mainWindow = new BrowserWindow({
@@ -2405,6 +2441,9 @@ function createMainWindow(sendToRenderer, openaiSessionRef) {
     mainWindow.setResizable(false);
     mainWindow.setContentProtection(true);
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    
+    // 初始化点击穿透状态，默认关闭以便用户可以操作窗口
+    let mouseEventsIgnored = false;
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth } = primaryDisplay.workAreaSize;
@@ -2412,9 +2451,29 @@ function createMainWindow(sendToRenderer, openaiSessionRef) {
     const y = 0;
     mainWindow.setPosition(x, y);
 
+    // 智能alwaysOnTop管理：只在有功能窗口显示时才置顶
     if (process.platform === 'win32') {
-        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+        mainWindow.setAlwaysOnTop(false); // 默认不置顶
     }
+    
+    // 添加智能置顶管理
+    const manageAlwaysOnTop = () => {
+        const hasVisibleFeatureWindow = ['ask', 'listen', 'settings'].some(name => {
+            const win = windowPool.get(name);
+            return win && !win.isDestroyed() && win.isVisible();
+        });
+        
+        if (hasVisibleFeatureWindow && !mainWindow.isAlwaysOnTop()) {
+            mainWindow.setAlwaysOnTop(true, 'normal');
+            console.log('[AlwaysOnTop] Enabled - feature window visible');
+        } else if (!hasVisibleFeatureWindow && mainWindow.isAlwaysOnTop()) {
+            mainWindow.setAlwaysOnTop(false);
+            console.log('[AlwaysOnTop] Disabled - no feature windows visible');
+        }
+    };
+    
+    // 定期检查是否需要调整置顶状态
+    setInterval(manageAlwaysOnTop, 1000);
 
     mainWindow.loadFile(path.join(__dirname, '../index.html'));
 
@@ -2470,6 +2529,7 @@ function getDefaultKeybinds() {
         toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
         toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
         nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
+        toggleListen: isMac ? 'Cmd+L' : 'Ctrl+L',
         manualScreenshot: isMac ? 'Cmd+Shift+S' : 'Ctrl+Shift+S',
         previousResponse: isMac ? 'Cmd+[' : 'Ctrl+[',
         nextResponse: isMac ? 'Cmd+]' : 'Ctrl+]',
@@ -2571,10 +2631,10 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer, openaiSessi
                 mouseEventsIgnored = !mouseEventsIgnored;
                 if (mouseEventsIgnored) {
                     mainWindow.setIgnoreMouseEvents(true, { forward: true });
-                    console.log('Mouse events ignored');
+                    console.log('Mouse events ignored (click-through enabled)');
                 } else {
                     mainWindow.setIgnoreMouseEvents(false);
-                    console.log('Mouse events enabled');
+                    console.log('Mouse events enabled (click-through disabled)');
                 }
                 mainWindow.webContents.send('click-through-toggled', mouseEventsIgnored);
             });
@@ -2596,16 +2656,41 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer, openaiSessi
                 }
 
                 if (askWindow.isVisible()) {
+                    // 检查是否有输入内容，如果有就发送，如果没有就关闭窗口
+                    askWindow.webContents.executeJavaScript(`
+                        (() => {
+                            const textInput = document.querySelector('textarea, input[type="text"]');
+                            if (textInput && textInput.value.trim()) {
+                                return true; // 有内容，发送消息
+                            } else {
+                                return false; // 没有内容，关闭窗口
+                            }
+                        })()
+                    `).then(hasContent => {
+                        if (hasContent) {
                     askWindow.webContents.send('ask-global-send');
+                        } else {
+                            askWindow.hide();
+                            console.log('Ask window hidden (no content to send)');
+                        }
+                    }).catch(error => {
+                        console.error('Error checking ask window content:', error);
+                        // 如果检查失败，默认发送消息
+                        askWindow.webContents.send('ask-global-send');
+                    });
                 } else {
                     try {
                         askWindow.show();
 
+                        // 只在窗口首次显示时调用布局更新，避免拖拽时触发
+                        if (!askWindow._hasBeenShown) {
                         const header = windowPool.get('header');
                         if (header) {
                             const currentHeaderPosition = header.getBounds();
                             updateLayout();
                             header.setPosition(currentHeaderPosition.x, currentHeaderPosition.y, false);
+                            }
+                            askWindow._hasBeenShown = true;
                         }
 
                         askWindow.webContents.send('window-show-animation');
@@ -2683,6 +2768,48 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer, openaiSessi
             console.log(`Registered scrollDown: ${keybinds.scrollDown}`);
         } catch (error) {
             console.error(`Failed to register scrollDown (${keybinds.scrollDown}):`, error);
+        }
+    }
+
+    if (keybinds.toggleListen) {
+        try {
+            globalShortcut.register(keybinds.toggleListen, () => {
+                console.log('⌘/Ctrl+L Listen shortcut triggered');
+
+                const listenWindow = windowPool.get('listen');
+                if (!listenWindow || listenWindow.isDestroyed()) {
+                    console.error('Listen window not found or destroyed');
+                    return;
+                }
+
+                if (listenWindow.isVisible()) {
+                    listenWindow.hide();
+                    console.log('Listen window hidden');
+                } else {
+                    try {
+                        listenWindow.show();
+
+                        // 只在窗口首次显示时调用布局更新，避免拖拽时触发
+                        if (!listenWindow._hasBeenShown) {
+                            const header = windowPool.get('header');
+                            if (header) {
+                                const currentHeaderPosition = header.getBounds();
+                                updateLayout();
+                                header.setPosition(currentHeaderPosition.x, currentHeaderPosition.y, false);
+                            }
+                            listenWindow._hasBeenShown = true;
+                        }
+
+                        listenWindow.webContents.send('window-show-animation');
+                        console.log('Listen window shown');
+                    } catch (e) {
+                        console.error('Error showing Listen window:', e);
+                    }
+                }
+            });
+            console.log(`Registered Listen shortcut (toggleListen): ${keybinds.toggleListen}`);
+        } catch (error) {
+            console.error(`Failed to register Listen shortcut (${keybinds.toggleListen}):`, error);
         }
     }
 }
@@ -2824,6 +2951,24 @@ async function captureScreenshotInternal(options = {}) {
         throw error;
     }
 }
+
+ipcMain.on('initialize-openai', async (event, { profile, language }) => {
+    console.log(`Received initialize-openai request with profile: ${profile}, language: ${language}`);
+    
+    // This part is simplified as we are using LiteLLM and don't need complex client switching.
+    console.log('[STT Init] Using remote LiteLLM. No local client needed.');
+
+    try {
+        if (window.pickleGlass?.stt) {
+            await window.pickleGlass.stt.reinitialize(language);
+            console.log(`[STT] Re-initialized with language: ${language}`);
+        }
+        event.reply('initialization-complete', { success: true });
+    } catch (error) {
+        console.error('Failed to re-initialize STT:', error);
+        event.reply('initialization-complete', { success: false, error: error.message });
+    }
+});
 
 module.exports = {
     createWindows,

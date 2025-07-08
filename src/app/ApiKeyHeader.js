@@ -375,8 +375,8 @@ export class ApiKeyHeader extends LitElement {
         if (!apiKey || apiKey.length < 15) return false;
 
         try {
-            const config = require('../../common/config/config');
-            const baseURL = config.get('ai').baseURL;
+            // 直接使用Railway LiteLLM服务URL，避免依赖Node.js config模块
+            const baseURL = 'https://litellm-production-ec35.up.railway.app';
             const healthEndpoint = `${baseURL}/health`;
             
             console.log(`Validating API key with LiteLLM health endpoint: ${healthEndpoint}`);

@@ -3,6 +3,7 @@ import { html, css, LitElement } from '../assets/lit-core-2.7.4.min.js';
 export class AppHeader extends LitElement {
     static properties = {
         isSessionActive: { type: Boolean, state: true },
+        isSettingsOpen: { type: Boolean, state: true },
     };
 
     static styles = css`
@@ -303,6 +304,7 @@ export class AppHeader extends LitElement {
         this.hasSlidIn = false;
         this.settingsHideTimer = null;
         this.isSessionActive = false;
+        this.isSettingsOpen = false;
         this.animationEndTimer = null;
 
         if (window.require) {
@@ -314,6 +316,11 @@ export class AppHeader extends LitElement {
 
             ipcRenderer.on('cancel-hide-settings', () => {
                 this.cancelHideWindow('settings');
+            });
+
+            // 监听设置窗口关闭事件
+            ipcRenderer.on('settings-window-closed', () => {
+                this.isSettingsOpen = false;
             });
         }
 
@@ -525,11 +532,30 @@ export class AppHeader extends LitElement {
         if (window.require) {
             console.log(`[AppHeader] hideWindow('${name}') called at ${Date.now()}`);
             window.require('electron').ipcRenderer.send('hide-window', name);
+            
+            // 更新设置窗口状态
+            if (name === 'settings') {
+                this.isSettingsOpen = false;
+            }
         }
     }
 
     cancelHideWindow(name) {
 
+    }
+
+    toggleSettings(element) {
+        if (this.wasJustDragged) return;
+        
+        if (this.isSettingsOpen) {
+            // 关闭设置窗口
+            this.hideWindow('settings');
+            this.isSettingsOpen = false;
+        } else {
+            // 打开设置窗口
+            this.showWindow('settings', element);
+            this.isSettingsOpen = true;
+        }
     }
 
     render() {
@@ -591,8 +617,7 @@ export class AppHeader extends LitElement {
 
                 <button 
                     class="settings-button"
-                    @mouseenter=${(e) => this.showWindow('settings', e.currentTarget)}
-                    @mouseleave=${() => this.hideWindow('settings')}
+                    @click=${(e) => this.toggleSettings(e.currentTarget)}
                 >
                     <div class="settings-icon">
                         <svg width="16" height="17" viewBox="0 0 16 17" fill="none" xmlns="http://www.w3.org/2000/svg">

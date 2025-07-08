@@ -120,20 +120,18 @@ class HeaderTransitionManager {
             });
 
             ipcRenderer.on('api-key-validated', () => {
-                this.hasApiKey = true;
+                console.log('[HeaderController] API key validation bypassed, going to app');
                 this.transitionToAppHeader();
             });
 
             ipcRenderer.on('api-key-removed', () => {
-                this.hasApiKey = false;
-                this.transitionToApiKeyHeader();
+                console.log('[HeaderController] API key removal ignored, staying in app');
+                // No action needed - stay in app interface
             });
 
             ipcRenderer.on('api-key-updated', () => {
-                this.hasApiKey = true;
-                if (!auth.currentUser) {
-                    this.transitionToAppHeader();
-                }
+                console.log('[HeaderController] API key update ignored, staying in app');
+                // No action needed - stay in app interface
             });
 
             ipcRenderer.on('firebase-auth-success', async (event, firebaseUser) => {
@@ -200,31 +198,13 @@ class HeaderTransitionManager {
 
             if (!this.isInitialized) {
                 this.isInitialized = true;
-            }
-
-            if (user) {
-                console.log('[HeaderController] User is logged in, checking permissions...');
-                const permissionResult = await this.checkPermissions();
-                if (permissionResult.success) {
-                    this.transitionToAppHeader(!this.hasApiKey);
-                } else {
-                    console.log('[HeaderController] Permissions not granted, staying on ApiKeyHeader');
-                    if (this.apiKeyHeader) {
-                        this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
-                        this.apiKeyHeader.requestUpdate();
-                    }
-                }
-            } else if (this.hasApiKey) {
-                console.log('[HeaderController] No Firebase user but API key exists, checking permissions...');
-                const permissionResult = await this.checkPermissions();
-                if (permissionResult.success) {
-                    this.transitionToAppHeader(false);
-                } else {
-                    console.log('[HeaderController] Permissions not granted, staying on ApiKeyHeader');
-                }
+                
+                // Only transition to app header on first initialization
+                // _bootstrap() has already handled the initial setup
+                console.log('[HeaderController] Firebase auth initialized, app header already set by bootstrap');
             } else {
-                console.log('[HeaderController] No auth & no API key — showing ApiKeyHeader');
-                this.transitionToApiKeyHeader();
+                // For subsequent auth state changes, just log but don't change interface
+                console.log('[HeaderController] Firebase auth state changed, maintaining current interface');
             }
         });
     }
@@ -237,44 +217,25 @@ class HeaderTransitionManager {
     }
 
     async _bootstrap() {
-        let storedKey = null;
-        if (window.require) {
-            try {
-                storedKey = await window
-                    .require('electron')
-                    .ipcRenderer.invoke('get-current-api-key');
-            } catch (_) {}
-        }
-        this.hasApiKey = !!storedKey;
-
-        const user = await new Promise(resolve => {
-            const unsubscribe = onAuthStateChanged(auth, u => {
-                unsubscribe();
-                resolve(u);
-            });
-        });
-
-        if (user || this.hasApiKey) {
+        // Skip API key check and go directly to app interface
+        console.log('[HeaderController] Skipping API key validation, going directly to app interface');
+        
+        // Check permissions first
             const permissionResult = await this.checkPermissions();
             
             if (permissionResult.success) {
                 await this._resizeForApp();
                 this.ensureHeader('app');
             } else {
-                await this._resizeForApiKey();
-                this.ensureHeader('apikey');
-                
-                setTimeout(() => {
-                    if (this.apiKeyHeader) {
-                        this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
-                        this.apiKeyHeader.requestUpdate();
-                    }
-                }, 100);
-            }
-        } else {
-            await this._resizeForApiKey();
-            this.ensureHeader('apikey');
+            // Even without permissions, go to app interface with error display
+            await this._resizeForApp();
+            this.ensureHeader('app');
+            console.log('[HeaderController] Permissions not granted but proceeding to app interface:', permissionResult.error);
         }
+        
+        // Force notify header state to ensure feature windows are created
+        console.log('[HeaderController] Force notifying header state as app');
+        this.notifyHeaderState('app');
     }
 
     async transitionToAppHeader(animate = true) {

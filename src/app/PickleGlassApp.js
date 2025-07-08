@@ -26,6 +26,8 @@ export class PickleGlassApp extends LitElement {
             width: 100%;
         }
 
+        /* 状态指示器样式已移至设置页面 */
+
     `;
 
     static properties = {
@@ -43,6 +45,8 @@ export class PickleGlassApp extends LitElement {
         _viewInstances: { type: Object, state: true },
         _isClickThrough: { state: true },
         structuredData: { type: Object }, 
+        // litellmStatus: { type: String }, // 已移至设置页面
+        litellmLastCheck: { type: Number },
     };
 
     constructor() {
@@ -57,10 +61,16 @@ export class PickleGlassApp extends LitElement {
         this._isClickThrough = false;
         this.outlines = [];
         this.analysisRequests = [];
+        
+        // LiteLLM状态监控已移至设置页面
+        // this.litellmStatus = 'checking';
 
         window.pickleGlass.setStructuredData = data => {
             this.updateStructuredData(data);
         };
+        
+        // LiteLLM状态监控已移至设置页面
+        // this.startLiteLLMStatusMonitoring();
     }
 
     connectedCallback() {
@@ -93,6 +103,9 @@ export class PickleGlassApp extends LitElement {
             ipcRenderer.removeAllListeners('show-view');
             ipcRenderer.removeAllListeners('start-listening-session');
         }
+        
+        // LiteLLM状态监控已移至设置页面
+        // if (this.litellmStatusInterval) { clearInterval(this.litellmStatusInterval); }
     }
 
     updated(changedProperties) {
@@ -250,36 +263,54 @@ export class PickleGlassApp extends LitElement {
     }
 
     render() {
+        // 状态指示器已移至设置页面，这里不再显示
+
+        let viewContent;
         switch (this.currentView) {
             case 'listen':
-                return html`<assistant-view
+                viewContent = html`<assistant-view
                     .currentResponseIndex=${this.currentResponseIndex}
                     .selectedProfile=${this.selectedProfile}
                     .structuredData=${this.structuredData}
                     .onSendText=${message => this.handleSendText(message)}
                     @response-index-changed=${e => (this.currentResponseIndex = e.detail.index)}
                 ></assistant-view>`;
+                break;
             case 'ask':
-                return html`<ask-view></ask-view>`;
+                viewContent = html`<ask-view></ask-view>`;
+                break;
             case 'customize':
-                return html`<customize-view
+                viewContent = html`<customize-view
                     .selectedProfile=${this.selectedProfile}
                     .selectedLanguage=${this.selectedLanguage}
                     .onProfileChange=${profile => (this.selectedProfile = profile)}
                     .onLanguageChange=${lang => (this.selectedLanguage = lang)}
                 ></customize-view>`;
+                break;
             case 'history':
-                return html`<history-view></history-view>`;
+                viewContent = html`<history-view></history-view>`;
+                break;
             case 'help':
-                return html`<help-view></help-view>`;
+                viewContent = html`<help-view></help-view>`;
+                break;
             case 'onboarding':
-                return html`<onboarding-view></onboarding-view>`;
+                viewContent = html`<onboarding-view></onboarding-view>`;
+                break;
             case 'setup':
-                return html`<setup-view></setup-view>`;
+                viewContent = html`<setup-view></setup-view>`;
+                break;
             default:
-                return html`<div>Unknown view: ${this.currentView}</div>`;
+                viewContent = html`<div>Unknown view: ${this.currentView}</div>`;
         }
+
+        return html`
+            ${viewContent}
+        `;
     }
+
+    // LiteLLM状态监控方法已移至设置页面
+    // startLiteLLMStatusMonitoring() { ... }
+    // async checkLiteLLMStatus() { ... }
 }
 
 customElements.define('pickle-glass-app', PickleGlassApp);
